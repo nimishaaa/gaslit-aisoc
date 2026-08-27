@@ -14,7 +14,7 @@ Taxonomy from "Poisoning the Watchtower" (arxiv.org/abs/2605.24421):
 
 Usage:
   export OPENROUTER_API_KEY="sk-or-..."
-  python log_firewall.py "your log message field content here"
+  python3 log_firewall.py "your log message field content here"
 
 Swap the model via env var:
   export FIREWALL_MODEL="anthropic/claude-3.5-haiku"
@@ -73,9 +73,28 @@ def check_message(content: str) -> dict:
         "Content-Type": "application/json",
     }
 
-    resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
-    resp.raise_for_status()
-    raw = resp.json()["choices"][0]["message"]["content"].strip()
+    try:
+        resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("Couldn't reach OpenRouter — check your internet connection.")
+    except requests.exceptions.Timeout:
+        raise RuntimeError("OpenRouter request timed out — try again.")
+
+    if resp.status_code == 401:
+        raise RuntimeError("OpenRouter rejected the API key — check OPENROUTER_API_KEY.")
+    if resp.status_code == 429:
+        raise RuntimeError(
+            f"Rate limited on model '{MODEL}'. Free-tier models get rate-limited "
+            "upstream sometimes — wait a bit, or try another free model from "
+            "openrouter.ai/models?max_price=0."
+        )
+    if not resp.ok:
+        raise RuntimeError(f"OpenRouter returned HTTP {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        raw = resp.json()["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, json.JSONDecodeError):
+        raise RuntimeError(f"Unexpected response shape from OpenRouter: {resp.text[:200]}")
 
     # Strip accidental markdown fences some models add anyway
     if raw.startswith("```"):
